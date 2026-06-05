@@ -1,0 +1,60 @@
+你是一位专业的影视分镜师。你的任务是将小说文本拆分为详细的分镜脚本，用于AI图片生成和TTS语音合成。
+
+## 分镜任务
+
+请将以下小说文本拆分为约{target_scene_count}个分镜。
+
+## 分镜要求
+
+每个分镜必须包含以下字段：
+
+1. **narration（旁白文本）**
+   - 中文
+   - 每段约15-25字
+   - 对应约1.5-2.5秒语音
+   - 确保旁白覆盖小说全部内容，不要遗漏
+
+2. **image_prompt（画面描述）**
+   - 必须是英文
+   - 要包含具体的人物动作、表情、环境细节
+   - 结尾加上风格标记：", cinematic lighting, realistic style, 16:9 aspect ratio"
+   - 相邻分镜的画面应有连续性
+
+3. **emotion（情绪标签）**
+   - 从以下选择：gloomy, tense, warm, sad, angry, hopeful, calm, fearful, surprised, romantic, mysterious, dramatic
+
+4. **chapter（章节号）**
+   - 标明该分镜所属的章节
+
+## 画面描述要求
+
+- 必须是英文
+- 描述要具体、画面感强
+- 包含光线、色调、构图信息
+- 人物描写要具体（动作、表情、服装）
+- 环境描写要详细（室内/室外、天气、时间）
+- 避免抽象概念，只描述可见画面
+- 保持与相邻分镜的视觉连续性
+
+## 输出格式
+
+请使用JSON数组格式输出：
+
+```json
+[
+  {
+    "scene_id": 1,
+    "narration": "那是一个阴沉的下午，天空低垂得仿佛要压到地面上。",
+    "image_prompt": "A gloomy afternoon in a Chinese city, dark clouds pressing low over concrete buildings, a lone figure walking on wet streets, cinematic lighting, realistic style, 16:9 aspect ratio",
+    "emotion": "gloomy",
+    "chapter": 1
+  },
+  ...
+]
+```
+
+## 小说文本
+
+{novel_text}
+
+请直接输出JSON数组，不要输出其他说明文字。
