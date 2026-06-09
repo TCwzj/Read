@@ -1,121 +1,150 @@
 """
-全局配置模块
-从环境变量读取配置，提供默认值
+全局配置文件
+支持配置不同的 LLM 后端、TTS 服务、图片生成服务等
 """
 import os
-from pathlib import Path
+from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 
-# 加载 .env 文件
 load_dotenv()
 
-# ===== 项目路径 =====
-BASE_DIR = Path(__file__).resolve().parent.parent
-STORAGE_DIR = BASE_DIR / "storage"
-IMAGES_DIR = STORAGE_DIR / "images"
-AUDIO_DIR = STORAGE_DIR / "audio"
-VIDEO_DIR = STORAGE_DIR / "video"
-TEMP_DIR = STORAGE_DIR / "temp"
-PROMPTS_DIR = BASE_DIR / "config" / "prompts"
+
+class LLMConfig:
+    """LLM 配置 - 支持多种后端"""
+    # 提供商选择：openai, azure, anthropic, gemini, ollama, localapi
+    PROVIDER = os.getenv("LLM_PROVIDER", "openai")
+    
+    # API 配置
+    API_KEY = os.getenv("LLM_API_KEY", "")
+    API_BASE = os.getenv("LLM_API_BASE", None)  # 自定义 API 端点
+    API_VERSION = os.getenv("LLM_API_VERSION", None)  # Azure API 版本
+    
+    # 模型配置
+    MODEL_NAME = os.getenv("LLM_MODEL_NAME", "gpt-4o")
+    TEMPERATURE = float(os.getenv("LLM_TEMPERATURE", "0.7"))
+    MAX_TOKENS = int(os.getenv("LLM_MAX_TOKENS", "4096"))
+    
+    # 备用模型（当主模型失败时使用）
+    FALLBACK_MODEL = os.getenv("LLM_FALLBACK_MODEL", None)
+    
+    # 请求配置
+    TIMEOUT = int(os.getenv("LLM_TIMEOUT", "60"))
+    MAX_RETRIES = int(os.getenv("LLM_MAX_RETRIES", "3"))
+    
+    @classmethod
+    def get_config(cls) -> Dict[str, Any]:
+        """获取 LLM 配置字典"""
+        return {
+            "provider": cls.PROVIDER,
+            "api_key": cls.API_KEY,
+            "api_base": cls.API_BASE,
+            "api_version": cls.API_VERSION,
+            "model_name": cls.MODEL_NAME,
+            "temperature": cls.TEMPERATURE,
+            "max_tokens": cls.MAX_TOKENS,
+            "timeout": cls.TIMEOUT,
+            "max_retries": cls.MAX_RETRIES,
+        }
 
 
-class Settings:
-    """全局配置类"""
-
-    # ===== LLM 配置 =====
-    OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
-    OPENAI_BASE_URL: str = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
-    OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o")
-    LLM_TEMPERATURE: float = float(os.getenv("LLM_TEMPERATURE", "0.7"))
-    LLM_MAX_TOKENS: int = int(os.getenv("LLM_MAX_TOKENS", "4096"))
-
-    # ===== 抓取配置 =====
-    SCRAPE_COUNT: int = int(os.getenv("SCRAPE_COUNT", "10"))
-    SCRAPE_CATEGORY: str = os.getenv("SCRAPE_CATEGORY", "society")
-    SCRAPE_HEADLESS: bool = os.getenv("SCRAPE_HEADLESS", "true").lower() == "true"
-    SCRAPE_PROXY: str = os.getenv("SCRAPE_PROXY", "")
-
-    # ===== 脱敏配置 =====
-    PII_TYPES: list[str] = os.getenv(
-        "PII_TYPES", "name,phone,address,id_number,organization"
-    ).split(",")
-
-    # ===== 小说改写配置 =====
-    NOVEL_STYLE: str = os.getenv("NOVEL_STYLE", "realism")
-    NOVEL_TARGET_LENGTH: int = int(os.getenv("NOVEL_TARGET_LENGTH", "30000"))
-    NOVEL_CHAPTERS: int = int(os.getenv("NOVEL_CHAPTERS", "60"))
-    NOVEL_WORDS_PER_CHAPTER: int = int(os.getenv("NOVEL_WORDS_PER_CHAPTER", "500"))
-
-    # ===== 分镜配置 =====
-    SCENE_TARGET_COUNT: int = int(os.getenv("SCENE_TARGET_COUNT", "1800"))
-    SCENE_SECONDS_PER_SCENE: float = float(os.getenv("SCENE_SECONDS_PER_SCENE", "1.5"))
-
-    # ===== TTS 配置 =====
-    TTS_VOICE_TYPE: str = os.getenv("TTS_VOICE_TYPE", "narrator_male")
-    TTS_SPEED: float = float(os.getenv("TTS_SPEED", "1.0"))
-    TTS_SENTENCE_PAUSE_MS: int = int(os.getenv("TTS_SENTENCE_PAUSE_MS", "300"))
-    TTS_PARAGRAPH_PAUSE_MS: int = int(os.getenv("TTS_PARAGRAPH_PAUSE_MS", "800"))
-
-    # TTS语音映射
-    TTS_VOICE_MAP: dict = {
-        "narrator_male": "zh-CN-YunxiNeural",
-        "narrator_female": "zh-CN-XiaoxiaoNeural",
-        "storyteller": "zh-CN-YunjianNeural",
-    }
-
-    # ===== 图片生成配置 =====
-    IMAGE_WIDTH: int = int(os.getenv("IMAGE_WIDTH", "1920"))
-    IMAGE_HEIGHT: int = int(os.getenv("IMAGE_HEIGHT", "1080"))
-    IMAGE_BATCH_SIZE: int = int(os.getenv("IMAGE_BATCH_SIZE", "5"))
-    IMAGE_STYLE_PRESET: str = os.getenv("IMAGE_STYLE_PRESET", "cinematic_realistic")
-
-    # 图片风格后缀
-    IMAGE_STYLE_SUFFIXES: dict = {
-        "cinematic_realistic": (
-            "cinematic lighting, realistic photography, 16:9, high detail, "
-            "Chinese urban setting, warm color palette, shallow depth of field"
-        ),
-        "dark_atmospheric": (
-            "dark atmospheric lighting, moody, dramatic shadows, "
-            "cinematic, 16:9, high contrast, film grain"
-        ),
-        "warm_literary": (
-            "warm soft lighting, literary film style, gentle tones, "
-            "16:9, shallow depth of field, natural light"
-        ),
-    }
-
-    # 负面提示词
-    IMAGE_NEGATIVE_PROMPT: str = (
-        "cartoon, anime, painting, watermark, text, distorted face, "
-        "extra fingers, low quality, blurry, deformed, disfigured, "
-        "bad anatomy, bad proportions, duplicate, cropped"
-    )
-
-    # Stable Diffusion API 配置
-    SD_API_URL: str = os.getenv("SD_API_URL", "http://127.0.0.1:7860")
-    SD_API_ENABLED: bool = os.getenv("SD_API_ENABLED", "false").lower() == "true"
-
-    # ===== 视频合成配置 =====
-    VIDEO_TRANSITION: str = os.getenv("VIDEO_TRANSITION", "crossfade")
-    VIDEO_ADD_SUBTITLES: bool = os.getenv("VIDEO_ADD_SUBTITLES", "true").lower() == "true"
-    VIDEO_FPS: int = int(os.getenv("VIDEO_FPS", "30"))
-    VIDEO_CRF: int = int(os.getenv("VIDEO_CRF", "23"))
-    VIDEO_PRESET: str = os.getenv("VIDEO_PRESET", "medium")
-
-    # ===== 任务队列配置（可选） =====
-    REDIS_URL: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-    CELERY_BROKER_URL: str = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/0")
-    CELERY_RESULT_BACKEND: str = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/0")
-
-    # ===== 日志配置 =====
-    LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO")
-
-    def ensure_dirs(self):
-        """确保所有存储目录存在"""
-        for d in [STORAGE_DIR, IMAGES_DIR, AUDIO_DIR, VIDEO_DIR, TEMP_DIR]:
-            d.mkdir(parents=True, exist_ok=True)
+class TTSConfig:
+    """TTS 语音合成配置"""
+    # 提供商选择：edge, azure, aliyun, chattts, openai
+    PROVIDER = os.getenv("TTS_PROVIDER", "edge")
+    
+    # API 配置
+    API_KEY = os.getenv("TTS_API_KEY", "")
+    API_BASE = os.getenv("TTS_API_BASE", None)
+    
+    # 语音配置
+    VOICE = os.getenv("TTS_VOICE", "zh-CN-XiaoxiaoNeural")  # Edge TTS 默认语音
+    SPEED = float(os.getenv("TTS_SPEED", "1.0"))
+    PITCH = int(os.getenv("TTS_PITCH", "0"))
+    
+    # 输出配置
+    OUTPUT_FORMAT = os.getenv("TTS_FORMAT", "mp3")
+    SAMPLE_RATE = int(os.getenv("TTS_SAMPLE_RATE", "24000"))
 
 
-# 全局配置实例
-settings = Settings()
+class ImageGenConfig:
+    """图片生成配置"""
+    # 提供商选择：stable_diffusion, dall-e, midjourney, comfiui, local
+    PROVIDER = os.getenv("IMAGE_PROVIDER", "stable_diffusion")
+    
+    # API 配置
+    API_KEY = os.getenv("IMAGE_API_KEY", "")
+    API_BASE = os.getenv("IMAGE_API_BASE", "http://localhost:7860")  # SD WebUI 默认地址
+    
+    # 生成配置
+    MODEL_NAME = os.getenv("IMAGE_MODEL", "sd_xl_base_1.0.safetensors")
+    WIDTH = int(os.getenv("IMAGE_WIDTH", "1920"))
+    HEIGHT = int(os.getenv("IMAGE_HEIGHT", "1080"))
+    STEPS = int(os.getenv("IMAGE_STEPS", "30"))
+    CFG_SCALE = float(os.getenv("IMAGE_CFG_SCALE", "7.0"))
+    
+    # 风格一致性配置
+    USE_IP_ADAPTER = os.getenv("IMAGE_USE_IP_ADAPTER", "true").lower() == "true"
+    USE_CONTROLNET = os.getenv("IMAGE_USE_CONTROLNET", "false").lower() == "true"
+    FIXED_SEED = int(os.getenv("IMAGE_FIXED_SEED", "42"))
+    
+    # 批处理配置
+    BATCH_SIZE = int(os.getenv("IMAGE_BATCH_SIZE", "4"))
+    CONCURRENT_JOBS = int(os.getenv("IMAGE_CONCURRENT_JOBS", "2"))
+
+
+class VideoConfig:
+    """视频合成配置"""
+    # 编码器配置
+    VIDEO_CODEC = os.getenv("VIDEO_CODEC", "libx264")
+    AUDIO_CODEC = os.getenv("AUDIO_CODEC", "aac")
+    CRF = int(os.getenv("VIDEO_CRF", "23"))  # 质量参数，越小质量越高
+    PRESET = os.getenv("VIDEO_PRESET", "medium")  # 编码速度
+    
+    # 输出配置
+    RESOLUTION = os.getenv("VIDEO_RESOLUTION", "1920x1080")
+    FPS = int(os.getenv("VIDEO_FPS", "30"))
+    
+    # FFmpeg 路径
+    FFMPEG_PATH = os.getenv("FFMPEG_PATH", "ffmpeg")
+
+
+class ScraperConfig:
+    """新闻抓取配置"""
+    # 抓取配置
+    HEADLESS = os.getenv("SCRAPER_HEADLESS", "true").lower() == "true"
+    PROXY = os.getenv("SCRAPER_PROXY", None)
+    USER_AGENT = os.getenv("SCRAPER_USER_AGENT", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36")
+    
+    # 反爬配置
+    DELAY_BETWEEN_REQUESTS = float(os.getenv("SCRAPER_DELAY", "1.0"))
+    MAX_RETRIES = int(os.getenv("SCRAPER_MAX_RETRIES", "3"))
+    TIMEOUT = int(os.getenv("SCRAPER_TIMEOUT", "30000"))
+
+
+class PipelineConfig:
+    """流水线配置"""
+    # 存储路径
+    STORAGE_ROOT = os.getenv("STORAGE_ROOT", "./storage")
+    
+    # 子目录
+    IMAGES_DIR = os.path.join(STORAGE_ROOT, "images")
+    AUDIO_DIR = os.path.join(STORAGE_ROOT, "audio")
+    VIDEO_DIR = os.path.join(STORAGE_ROOT, "video")
+    TEMP_DIR = os.path.join(STORAGE_ROOT, "temp")
+    
+    # 流水线配置
+    MAX_NEWS_COUNT = int(os.getenv("PIPELINE_MAX_NEWS", "10"))
+    TARGET_SCENE_COUNT = int(os.getenv("PIPELINE_TARGET_SCENES", "1800"))
+    TARGET_NOVEL_LENGTH = int(os.getenv("PIPELINE_TARGET_LENGTH", "30000"))
+    
+    # 质量检查
+    ENABLE_QUALITY_CHECK = os.getenv("PIPELINE_QUALITY_CHECK", "true").lower() == "true"
+    MIN_IMAGE_QUALITY = float(os.getenv("PIPELINE_MIN_IMAGE_QUALITY", "0.6"))
+
+
+# 创建配置目录
+os.makedirs(PipelineConfig.STORAGE_ROOT, exist_ok=True)
+os.makedirs(PipelineConfig.IMAGES_DIR, exist_ok=True)
+os.makedirs(PipelineConfig.AUDIO_DIR, exist_ok=True)
+os.makedirs(PipelineConfig.VIDEO_DIR, exist_ok=True)
+os.makedirs(PipelineConfig.TEMP_DIR, exist_ok=True)

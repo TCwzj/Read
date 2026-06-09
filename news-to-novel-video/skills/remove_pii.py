@@ -1,181 +1,185 @@
 """
 Skill 2: remove_pii
-识别并替换新闻中的个人身份信息（PII）
+使用 LLM 智能识别并移除个人身份信息 (PII)
 """
-import re
-from loguru import logger
+import logging
+from typing import List, Dict, Any
+from models.schemas import SanitizedNews, RawNews
+from services.llm_service import llm_generate_json
 
-from services.llm_service import llm_service
-from models.schemas import SanitizedNews, PIIReplacement
+logger = logging.getLogger(__name__)
 
 
-# 正则表达式模式
-REGEX_PATTERNS = {
-    "phone": (r"1[3-9]\d{9}", "[电话号码]"),
-    "id_number": (r"\d{17}[\dXx]", "[身份证号]"),
-    "email": (r"[\w.-]+@[\w.-]+\.\w+", "[电子邮箱]"),
-    "bank_card": (r"\d{16,19}", "[银行卡号]"),
-    "license_plate": (r"[京津沪渝冀豫云辽黑湘皖鲁新苏浙赣鄂桂甘晋蒙陕吉闽贵粤川青藏琼宁][A-Z][A-Z0-9]{5}", "[车牌号]"),
+# PII 脱敏的 JSON Schema
+PII_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "replacements": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "original": {"type": "string", "description": "原始敏感信息"},
+                    "replacement": {"type": "string", "description": "替换后的通用描述"},
+                    "type": {
+                        "type": "string", 
+                        "description": "敏感信息类型",
+                        "enum": ["person_name", "location", "phone", "id_number", "organization", "address", "other"]
+                    }
+                },
+                "required": ["original", "replacement", "type"]
+            },
+            "description": "需要替换的敏感信息列表"
+        },
+        "sanitized_text": {
+            "type": "string",
+            "description": "脱敏后的完整文本"
+        },
+        "confidence_score": {
+            "type": "number",
+            "description": "脱敏置信度 (0-1)",
+            "minimum": 0,
+            "maximum": 1
+        }
+    },
+    "required": ["replacements", "sanitized_text", "confidence_score"]
 }
 
 
 def remove_pii(
     text: str,
-    pii_types: list[str] | None = None,
+    pii_types: List[str] = None,
+    original_news_id: str = None
 ) -> SanitizedNews:
     """
-    识别并替换文本中的个人身份信息
-
+    识别并替换文本中的个人身份信息 (PII)
+    
     Args:
-        text: 需要脱敏的新闻正文文本
+        text: 需要脱敏的新闻正文
         pii_types: 需要脱敏的信息类型列表
-
+        original_news_id: 原始新闻 ID
+    
     Returns:
-        SanitizedNews 脱敏后新闻对象
+        SanitizedNews: 脱敏后的新闻对象
+    
+    脱敏类型:
+        - person_name: 人名 → "某人"/"他"/"她"
+        - location: 具体地址 → "某市某区"
+        - phone: 电话号码 → "[电话号码]"
+        - id_number: 身份证号 → "[身份证号]"
+        - organization: 机构名 → "某公司"/"某单位"
+        - address: 详细地址 → "某地址"
     """
-    pii_types = pii_types or ["name", "phone", "address", "id_number", "organization"]
-    logger.info(f"开始PII脱敏，类型: {pii_types}")
+    if pii_types is None:
+        pii_types = ["person_name", "location", "phone", "id_number", "organization", "address"]
+    
+    logger.info(f"开始脱敏处理，文本长度：{len(text)}")
+    
+    # 构建系统提示词
+    system_prompt = """你是一位专业的隐私保护专家。请仔细识别文本中的所有个人隐私信息，并进行脱敏处理。
 
-    all_replacements = []
-    sanitized_text = text
+脱敏规则：
+1. 人名 → 替换为"某人"、"他"、"她"等通用称呼
+2. 具体地址 → 替换为"某市某区"、"某小区"等
+3. 电话号码 → 替换为"[电话号码]"
+4. 身份证号 → 替换为"[身份证号]"
+5. 公司/机构名 → 替换为"某公司"、"某单位"等
+6. 其他可识别个人的信息 → 适当脱敏
 
-    # 第一步：正则匹配（电话、身份证、邮箱等）
-    for pii_type in pii_types:
-        if pii_type in REGEX_PATTERNS:
-            pattern, replacement = REGEX_PATTERNS[pii_type]
-            matches = re.findall(pattern, sanitized_text)
-            for match in matches:
-                all_replacements.append(PIIReplacement(
-                    original=match,
-                    replacement=replacement,
-                    type=pii_type,
-                ))
-                sanitized_text = sanitized_text.replace(match, replacement)
+注意：
+- 保持原文的叙事风格和流畅性
+- 脱敏后文本应该自然可读
+- 确保不遗漏任何敏感信息"""
 
-    # 第二步：NER识别（人名、地名、机构名）
+    # 用户提示词
+    user_prompt = f"""请对以下文本进行脱敏处理：
+
+{text}
+
+请输出 JSON 格式，包含：
+1. sanitized_text: 脱敏后的完整文本
+2. replacements: 替换记录列表，每项包含 original(原文)、replacement(替换后)、type(类型)
+3. confidence_score: 脱敏置信度 (0-1)"""
+
     try:
-        ner_replacements = _ner_recognize(text, pii_types)
-        for rep in ner_replacements:
-            sanitized_text = sanitized_text.replace(rep.original, rep.replacement)
-            all_replacements.append(rep)
+        # 使用 LLM 进行脱敏
+        result = llm_generate_json(user_prompt, PII_SCHEMA, system_prompt=system_prompt)
+        
+        sanitized_news = SanitizedNews(
+            original_news_id=original_news_id or "",
+            sanitized_content=result.get("sanitized_text", text),
+            replacements=result.get("replacements", []),
+            confidence_score=result.get("confidence_score", 0.8)
+        )
+        
+        logger.info(f"脱敏完成，识别{len(sanitized_news.replacements)}个敏感信息，置信度：{sanitized_news.confidence_score}")
+        return sanitized_news
+        
     except Exception as e:
-        logger.warning(f"NER识别失败，跳过: {e}")
+        logger.error(f"LLM 脱敏失败：{e}，使用规则脱敏")
+        return _fallback_rule_based_pii(text, original_news_id)
 
-    # 第三步：LLM复核
-    try:
-        llm_result = _llm_review(sanitized_text)
-        if llm_result:
-            for rep in llm_result:
-                sanitized_text = sanitized_text.replace(rep.original, rep.replacement)
-                all_replacements.append(rep)
-    except Exception as e:
-        logger.warning(f"LLM复核失败，跳过: {e}")
 
-    # 计算置信度
-    confidence = _calculate_confidence(text, sanitized_text, all_replacements)
-
-    logger.info(f"PII脱敏完成，替换{len(all_replacements)}处，置信度{confidence:.2f}")
-
+def _fallback_rule_based_pii(text: str, original_news_id: str = None) -> SanitizedNews:
+    """
+     fallback: 基于规则的脱敏（当 LLM 失败时使用）
+    """
+    import re
+    
+    replacements = []
+    sanitized = text
+    
+    # 电话号码匹配
+    phone_pattern = r'1[3-9]\d{9}|0\d{2,3}-?\d{7,8}'
+    for match in re.finditer(phone_pattern, sanitized):
+        replacements.append({
+            "original": match.group(),
+            "replacement": "[电话号码]",
+            "type": "phone"
+        })
+    
+    # 身份证号匹配（简单匹配）
+    id_pattern = r'\d{17}[\dXx]|\d{15}'
+    for match in re.finditer(id_pattern, sanitized):
+        replacements.append({
+            "original": match.group(),
+            "replacement": "[身份证号]",
+            "type": "id_number"
+        })
+    
+    # 执行替换
+    for repl in replacements:
+        sanitized = sanitized.replace(repl["original"], repl["replacement"])
+    
+    # 简单的人名替换（常见姓氏）
+    common_surnames = "赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨朱秦尤许何吕施张孔曹严华金魏陶姜"
+    for surname in common_surnames:
+        # 匹配"姓氏 + 某"或直接替换为"某人"
+        pass  # 简化处理
+    
     return SanitizedNews(
-        original_news_id="",
-        sanitized_content=sanitized_text,
-        replacements=all_replacements,
-        confidence_score=confidence,
+        original_news_id=original_news_id or "",
+        sanitized_content=sanitized,
+        replacements=replacements,
+        confidence_score=0.6
     )
 
 
-def _ner_recognize(text: str, pii_types: list[str]) -> list[PIIReplacement]:
-    """使用NER模型识别实体"""
-    replacements = []
-
-    try:
-        import spacy
-        nlp = spacy.load("zh_core_web_sm")
-        doc = nlp(text)
-
-        entity_type_map = {
-            "PERSON": "name",
-            "GPE": "address",
-            "LOC": "address",
-            "ORG": "organization",
-        }
-
-        replacement_map = {
-            "name": "某人",
-            "address": "某地",
-            "organization": "某单位",
-        }
-
-        for ent in doc.ents:
-            mapped_type = entity_type_map.get(ent.label_, "")
-            if mapped_type in pii_types:
-                replacements.append(PIIReplacement(
-                    original=ent.text,
-                    replacement=replacement_map.get(mapped_type, "某"),
-                    type=mapped_type,
-                ))
-
-    except ImportError:
-        logger.debug("spaCy未安装，跳过NER识别")
-    except OSError:
-        logger.debug("中文NER模型未下载，跳过NER识别")
-
-    return replacements
-
-
-def _llm_review(text: str) -> list[PIIReplacement]:
-    """使用LLM复核脱敏结果"""
-    replacements = []
-
-    result = llm_service.invoke_with_template(
-        "pii_removal",
-        {"text": text},
-    )
-
-    # 尝试解析结果
-    try:
-        import json
-        data = json.loads(result)
-        if isinstance(data, dict) and "replacements" in data:
-            for rep in data["replacements"]:
-                replacements.append(PIIReplacement(
-                    original=rep.get("original", ""),
-                    replacement=rep.get("replacement", ""),
-                    type=rep.get("type", "unknown"),
-                ))
-    except (json.JSONDecodeError, KeyError):
-        logger.debug("LLM复核结果解析失败，忽略")
-
-    return replacements
-
-
-def _calculate_confidence(
-    original: str,
-    sanitized: str,
-    replacements: list[PIIReplacement],
-) -> float:
-    """计算脱敏置信度"""
-    if not replacements:
-        return 1.0
-
-    # 基于替换数量和文本长度的比例
-    ratio = len(replacements) / max(len(original) / 10, 1)
-
-    # 正则匹配的置信度高，NER中等，LLM较低
-    type_weights = {
-        "phone": 0.95,
-        "id_number": 0.95,
-        "email": 0.95,
-        "bank_card": 0.95,
-        "license_plate": 0.95,
-        "name": 0.80,
-        "address": 0.75,
-        "organization": 0.70,
-    }
-
-    weighted_sum = sum(
-        type_weights.get(r.type, 0.5) for r in replacements
-    )
-    confidence = weighted_sum / max(len(replacements), 1)
-
-    return min(confidence, 1.0)
+def batch_remove_pii(news_list: List[RawNews]) -> List[SanitizedNews]:
+    """
+    批量脱敏新闻列表
+    
+    Args:
+        news_list: 原始新闻列表
+    
+    Returns:
+        脱敏后新闻列表
+    """
+    results = []
+    for news in news_list:
+        result = remove_pii(
+            text=news.content,
+            original_news_id=news.id
+        )
+        results.append(result)
+    return results
